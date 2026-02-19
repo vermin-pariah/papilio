@@ -1,0 +1,33 @@
+# --- Rust ---
+target/
+**/*.rs.bk
+debug/
+release/
+
+# --- Flutter ---
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+.packages
+build/
+**/*.g.dart
+**/pubspec.lock
+
+# --- OS & IDE ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.lock
+*.log
+
+# --- Project Specific ---
+.env
+data/
+models/
+scripts/
+
+# --- Docker ---
+.dockerignore
+papilio_mobile/android/gradle/wrapper/*.zip

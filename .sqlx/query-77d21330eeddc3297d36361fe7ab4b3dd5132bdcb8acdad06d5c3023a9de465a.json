@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO tracks (\n                title, album_id, artist_id, duration, path, bitrate, format, size, track_number, \n                lyrics, lyrics_source, sync_status\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::lyrics_source_type, $12::lyric_sync_status)\n            ON CONFLICT (path) DO UPDATE SET\n                title = EXCLUDED.title,\n                duration = EXCLUDED.duration,\n                bitrate = EXCLUDED.bitrate,\n                track_number = EXCLUDED.track_number,\n                lyrics = EXCLUDED.lyrics,\n                lyrics_source = EXCLUDED.lyrics_source,\n                sync_status = CASE \n                    WHEN tracks.lyrics <> EXCLUDED.lyrics THEN 'pending'::lyric_sync_status \n                    ELSE tracks.sync_status \n                END,\n                updated_at = NOW()\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Uuid",
+        "Int4",
+        "Text",
+        "Int4",
+        "Text",
+        "Int8",
+        "Int4",
+        "Text",
+        {
+          "Custom": {
+            "name": "lyrics_source_type",
+            "kind": {
+              "Enum": [
+                "file",
+                "embedded",
+                "online",
+                "none"
+              ]
+            }
+          }
+        },
+        {
+          "Custom": {
+            "name": "lyric_sync_status",
+            "kind": {
+              "Enum": [
+                "none",
+                "pending",
+                "processing",
+                "completed",
+                "failed"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "77d21330eeddc3297d36361fe7ab4b3dd5132bdcb8acdad06d5c3023a9de465a"
+}

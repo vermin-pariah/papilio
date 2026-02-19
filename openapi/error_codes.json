@@ -1,0 +1,38 @@
+{
+  "SUCCESS": {
+    "code": 200,
+    "message": "Operation successful"
+  },
+  "CREATED": {
+    "code": 201,
+    "message": "Resource created successfully"
+  },
+  "BAD_REQUEST": {
+    "code": 400,
+    "message": "Invalid request parameters or body"
+  },
+  "UNAUTHORIZED": {
+    "code": 401,
+    "message": "Authentication required or invalid credentials"
+  },
+  "FORBIDDEN": {
+    "code": 403,
+    "message": "Access denied"
+  },
+  "NOT_FOUND": {
+    "code": 404,
+    "message": "Resource not found"
+  },
+  "CONFLICT": {
+    "code": 409,
+    "message": "Resource already exists"
+  },
+  "UNPROCESSABLE_ENTITY": {
+    "code": 422,
+    "message": "Validation error or business logic failure"
+  },
+  "INTERNAL_SERVER_ERROR": {
+    "code": 500,
+    "message": "An unexpected error occurred on the server"
+  }
+}

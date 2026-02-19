@@ -1,0 +1,240 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Papilio API",
+    "description": "High-performance private cloud music center API",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/api",
+      "description": "Main API server"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "username": { "type": "string" },
+          "nickname": { "type": "string", "nullable": true },
+          "avatar": { "type": "string", "nullable": true },
+          "email": { "type": "string", "nullable": true },
+          "is_admin": { "type": "boolean" }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" }
+        }
+      },
+      "Track": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "title": { "type": "string" },
+          "artist_name": { "type": "string", "nullable": true },
+          "album_title": { "type": "string", "nullable": true },
+          "duration": { "type": "integer" },
+          "file_path": { "type": "string" },
+          "album_id": { "type": "string", "format": "uuid", "nullable": true },
+          "artist_id": { "type": "string", "format": "uuid", "nullable": true },
+          "is_favorite": { "type": "boolean" },
+          "lyrics": { "type": "string", "nullable": true },
+          "sync_status": { "type": "string", "enum": ["pending", "processing", "completed", "failed"] },
+          "lyric_offset_ms": { "type": "integer" }
+        }
+      },
+      "Playlist": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "user_id": { "type": "string", "format": "uuid" },
+          "is_system": { "type": "boolean" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/auth/register": {
+      "post": {
+        "summary": "Register a new user",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username", "password"],
+                "properties": {
+                  "username": { "type": "string" },
+                  "password": { "type": "string" },
+                  "nickname": { "type": "string" },
+                  "email": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "User created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "summary": "Login and get token",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username", "password"],
+                "properties": {
+                  "username": { "type": "string" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful login",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": { "type": "string" },
+                    "user": { "$ref": "#/components/schemas/User" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "summary": "Get current user info",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update user profile",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "nickname": { "type": "string" },
+                  "email": { "type": "string" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/music/search": {
+      "get": {
+        "summary": "Global search for tracks, albums, and artists",
+        "parameters": [
+          { "name": "q", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tracks": { "type": "array", "items": { "$ref": "#/components/schemas/Track" } },
+                    "albums": { "type": "array", "items": { "type": "object" } },
+                    "artists": { "type": "array", "items": { "type": "object" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/music/stream/{id}": {
+      "get": {
+        "summary": "Stream a track",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Audio stream" }
+        }
+      }
+    },
+    "/admin/library/organize": {
+      "post": {
+        "summary": "Trigger asynchronous music library reorganization",
+        "description": "Scans the library, reads tags, and moves files into '{Artist}/{Album}/{Title}.{ext}' or '/Unsorted/'. Only accessible by admins.",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "202": {
+            "description": "Reorganization task started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "task_id": { "type": "string", "format": "uuid" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "403": { "description": "Admin access required" }
+        }
+      }
+    }
+  }
+}

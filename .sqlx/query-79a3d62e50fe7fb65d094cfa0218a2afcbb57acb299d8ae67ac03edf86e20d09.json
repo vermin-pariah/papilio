@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE tracks SET sync_status = 'failed' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "79a3d62e50fe7fb65d094cfa0218a2afcbb57acb299d8ae67ac03edf86e20d09"
+}

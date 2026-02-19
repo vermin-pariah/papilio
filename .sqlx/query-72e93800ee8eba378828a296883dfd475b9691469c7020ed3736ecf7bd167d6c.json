@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM user_favorites WHERE user_id = $1 AND track_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "72e93800ee8eba378828a296883dfd475b9691469c7020ed3736ecf7bd167d6c"
+}

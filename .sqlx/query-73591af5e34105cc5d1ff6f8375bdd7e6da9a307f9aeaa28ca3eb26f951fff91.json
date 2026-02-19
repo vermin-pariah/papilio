@@ -1,0 +1,166 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT t.id, t.title, t.album_id, t.artist_id, \n               t.duration, t.track_number, \n               t.disc_number, t.path, t.bitrate, \n               t.format, t.size, t.bpm, \n               t.musicbrainz_track_id, \n               t.lyrics, t.lyrics_ai, \n               t.created_at, t.updated_at,\n               (f.user_id IS NOT NULL) as is_favorite,\n               a.name as \"artist_name?\",\n               al.title as \"album_title?\",\n               COALESCE(m.lyric_offset_ms, 0) as lyric_offset_ms,\n               t.sync_status as \"sync_status: SyncStatus\"\n        FROM tracks t\n        LEFT JOIN user_favorites f ON t.id = f.track_id AND f.user_id = $2\n        LEFT JOIN artists a ON t.artist_id = a.id\n        LEFT JOIN albums al ON t.album_id = al.id\n        LEFT JOIN user_track_metadata m ON t.id = m.track_id AND m.user_id = $2\n        WHERE (t.title ILIKE $1 OR $1 = '%%')\n          AND ($3::uuid IS NULL OR t.album_id = $3)\n          AND ($4::uuid IS NULL OR t.artist_id = $4)\n        ORDER BY t.album_id, t.track_number, t.title \n        LIMIT $5 OFFSET $6\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "album_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "artist_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "duration",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "track_number",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "disc_number",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "bitrate",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "format",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "size",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "bpm",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 12,
+        "name": "musicbrainz_track_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 13,
+        "name": "lyrics",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "lyrics_ai",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 16,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 17,
+        "name": "is_favorite",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 18,
+        "name": "artist_name?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 19,
+        "name": "album_title?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 20,
+        "name": "lyric_offset_ms",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 21,
+        "name": "sync_status: SyncStatus",
+        "type_info": {
+          "Custom": {
+            "name": "lyric_sync_status",
+            "kind": {
+              "Enum": [
+                "none",
+                "pending",
+                "processing",
+                "completed",
+                "failed"
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      null,
+      false,
+      false,
+      null,
+      true
+    ]
+  },
+  "hash": "73591af5e34105cc5d1ff6f8375bdd7e6da9a307f9aeaa28ca3eb26f951fff91"
+}

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO albums (title, artist_id, release_year) \n             VALUES ($1, $2, $3) \n             ON CONFLICT (title, artist_id) DO UPDATE SET release_year = COALESCE(albums.release_year, EXCLUDED.release_year)\n             RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4400d823b20b8fe1797dbc9e0f5128530afb840ce788d2aa32b10fd84d33de79"
+}

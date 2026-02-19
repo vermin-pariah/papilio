@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    UPDATE tracks \n                    SET lyrics_ai = $1, \n                        lyric_offset_ms = $2, \n                        sync_status = 'completed',\n                        lyric_alignment_strategy = 'lrc_guided',\n                        lyric_confidence = $3\n                    WHERE id = $4\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4",
+        "Float8",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "badcf44c6447791b2dc3c5cc5be819f7e931112cbb4bc3e6ecec0cf6ca281530"
+}

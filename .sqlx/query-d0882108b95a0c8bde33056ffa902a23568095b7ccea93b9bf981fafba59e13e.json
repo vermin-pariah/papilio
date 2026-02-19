@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO user_track_metadata (user_id, track_id, lyric_offset_ms, updated_at)\n         VALUES ($1, $2, $3, NOW())\n         ON CONFLICT (user_id, track_id) DO UPDATE SET lyric_offset_ms = EXCLUDED.lyric_offset_ms, updated_at = NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d0882108b95a0c8bde33056ffa902a23568095b7ccea93b9bf981fafba59e13e"
+}

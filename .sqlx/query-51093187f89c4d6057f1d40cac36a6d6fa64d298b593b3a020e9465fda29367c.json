@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE albums SET musicbrainz_album_id = $1, release_year = COALESCE(release_year, $2) WHERE id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "51093187f89c4d6057f1d40cac36a6d6fa64d298b593b3a020e9465fda29367c"
+}

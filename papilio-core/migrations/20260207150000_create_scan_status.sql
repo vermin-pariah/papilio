@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS scan_status (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    is_scanning BOOLEAN NOT NULL DEFAULT FALSE,
+    current_count INTEGER NOT NULL DEFAULT 0,
+    total_count INTEGER NOT NULL DEFAULT 0,
+    last_scan_at TIMESTAMP WITH TIME ZONE,
+    CONSTRAINT single_row CHECK (id = 1)
+);
+INSERT INTO scan_status (id, is_scanning) VALUES (1, FALSE) ON CONFLICT DO NOTHING;

@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM albums WHERE title ILIKE $1 ORDER BY release_year DESC LIMIT 5",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "artist_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "release_year",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "cover_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "musicbrainz_album_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 6,
+        "name": "musicbrainz_release_group_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "c111f4a17e220f8c587659ef2e201bde4fc072e0db6832b738456a5f39c5c3cb"
+}

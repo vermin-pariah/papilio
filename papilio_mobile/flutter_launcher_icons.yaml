@@ -1,0 +1,12 @@
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/branding/app_icon.png"
+  adaptive_icon_background: "#0F172A" # 使用主题深蓝色作为底色，消除白边
+  adaptive_icon_foreground: "assets/branding/app_icon.png" # 你的 Logo 作为前景
+  min_sdk_android: 21
+  web:
+    generate: true
+    image_path: "assets/branding/app_icon.png"
+    backgroundColor: "#0F172A"
+    themeColor: "#0EA5E9"
