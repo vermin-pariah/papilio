@@ -31,5 +31,11 @@ Papilio 是一个专注于性能与稳定性的私有音乐流媒体系统。它
 - **移动端**: Flutter, Riverpod, Just_Audio
 - **基础设施**: Docker & Docker Compose
 
+## 🔑 初始化凭据
+
+系统首次运行并完成数据库迁移后，将自动创建初始管理员：
+- **用户名**: `chi`
+- **初始密码**: `chi`
+
 ---
 Copyright © 2026 Papilio Team.
