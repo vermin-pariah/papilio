@@ -230,11 +230,11 @@ pub async fn trigger_artist_sync(
                 artist.id
             );
 
-            // 单次同步超时保护 (30秒)，防止单个异常请求阻塞队列
+            // 单次同步超时保护 (120秒)，防止单个异常请求阻塞队列
             let metadata_service = state_clone.metadata_service.clone();
             let sync_future = metadata_service.fetch_and_update_artist(artist.id);
             
-            match tokio::time::timeout(std::time::Duration::from_secs(30), sync_future).await {
+            match tokio::time::timeout(std::time::Duration::from_secs(120), sync_future).await {
                 Ok(Ok(_)) => {
                     tracing::info!("ADMIN: Sync success for artist {}", artist.id);
                 }

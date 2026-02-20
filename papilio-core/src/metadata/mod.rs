@@ -23,24 +23,32 @@ impl MetadataService {
     pub fn new(db: PgPool) -> Self {
         let user_agent = "PapilioMusic/1.0.0 ( contact: admin@papilio.music )";
 
+        // 配置全局代理环境，确保所有依赖库（如 musicbrainz_rs）均能正常联网
+        let proxy_url = "http://192.168.10.31:7890";
+        std::env::set_var("HTTP_PROXY", proxy_url);
+        std::env::set_var("HTTPS_PROXY", proxy_url);
+        std::env::set_var("http_proxy", proxy_url);
+        std::env::set_var("https_proxy", proxy_url);
+
         let mut builder = reqwest::Client::builder()
             .user_agent(user_agent)
-            .timeout(Duration::from_secs(30));
+            .timeout(Duration::from_secs(60))
+            .danger_accept_invalid_certs(true);
 
-        // 尝试使用宿主机代理解决下载超时问题
-        if let Ok(proxy) = reqwest::Proxy::all("http://192.168.10.31:7890") {
+        if let Ok(proxy) = reqwest::Proxy::all(proxy_url) {
             builder = builder.proxy(proxy);
-            println!("CORE_DEBUG: Enabled HTTP Proxy: http://192.168.10.31:7890");
+            tracing::info!("MetadataService: Network proxy configured -> {}", proxy_url);
         }
 
         let client = builder.build().unwrap_or_else(|e| {
-            tracing::error!("Failed to build reqwest client: {}", e);
+            tracing::error!("MetadataService: Failed to build reqwest client: {}", e);
             reqwest::Client::new()
         });
 
+        // 初始化 MusicBrainz 客户端
         let mut mb_client = MusicBrainzClient::default();
         if let Err(e) = mb_client.set_user_agent(user_agent) {
-            tracing::error!("Failed to set MusicBrainz User-Agent: {}", e);
+            tracing::error!("MetadataService: Failed to set MB User-Agent: {}", e);
         }
 
         Self {
@@ -59,26 +67,20 @@ impl MetadataService {
 
         Retry::spawn(retry_strategy, action)
             .await
-            .map_err(|e| AppError::Metadata(format!("MusicBrainz Retry Exhausted: {:?}", e)))
+            .map_err(|e| AppError::Metadata(format!("MusicBrainz API error: {:?}", e)))
     }
 
     pub async fn fetch_and_update_artist(&self, artist_id: Uuid) -> Result<(), AppError> {
-        println!("CORE_DEBUG: fetch_and_update_artist for {}", artist_id);
         let artist = sqlx::query!("SELECT name FROM artists WHERE id = $1", artist_id)
             .fetch_one(&self.db)
             .await?;
 
-        println!(
-            "CORE_DEBUG: STEP 1: Searching MusicBrainz for artist '{}'",
-            artist.name
-        );
-        tracing::info!(artist = %artist.name, "STEP 1: Searching MusicBrainz for artist");
+        tracing::info!(artist = %artist.name, "Syncing artist metadata...");
 
         let query = ArtistSearchQuery::query_builder()
             .artist(&artist.name)
             .build();
 
-        println!("CORE_DEBUG: STEP 1.1: Sending MB search request...");
         let results = self
             .mb_retry(|| async {
                 MBArtist::search(query.clone())
@@ -86,14 +88,10 @@ impl MetadataService {
                     .await
             })
             .await?;
-        println!("CORE_DEBUG: STEP 1.2: MB search request completed.");
 
         if let Some(mb_artist) = results.entities.first() {
             let mb_id_str = mb_artist.id.clone();
             let mb_id = Uuid::parse_str(&mb_id_str).ok();
-
-            println!("CORE_DEBUG: STEP 2: Found MBID {:?}, updating DB", mb_id);
-            tracing::info!(artist = %artist.name, mb_id = ?mb_id, "STEP 2: Found MBID, updating DB");
 
             sqlx::query!(
                 "UPDATE artists SET musicbrainz_artist_id = $1 WHERE id = $2",
@@ -104,129 +102,77 @@ impl MetadataService {
             .await?;
 
             if let Some(id) = mb_id {
-                println!("CORE_DEBUG: STEP 3: Triggering photo fetch for MBID {}", id);
-                tracing::info!(artist = %artist.name, "STEP 3: Triggering photo fetch");
                 if let Err(e) = self.fetch_artist_image(id, artist_id).await {
-                    tracing::error!("STEP 3: fetch_artist_image failed: {:?}", e);
-                    println!("CORE_DEBUG: STEP 3: fetch_artist_image failed: {:?}", e);
+                    tracing::error!(artist = %artist.name, error = ?e, "Failed to fetch artist image");
                 }
             }
         } else {
-            println!(
-                "CORE_DEBUG: STEP 2: No MBID found for artist '{}'",
-                artist.name
-            );
-            tracing::warn!(artist = %artist.name, "STEP 2: No MBID found for artist");
+            tracing::warn!(artist = %artist.name, "No MusicBrainz ID found for artist");
         }
 
-        println!(
-            "CORE_DEBUG: fetch_and_update_artist FINISHED for {}",
-            artist_id
-        );
         Ok(())
     }
 
     async fn fetch_artist_image(&self, mb_id: Uuid, artist_id: Uuid) -> Result<(), AppError> {
-        println!("CORE_DEBUG: fetch_artist_image START for MBID {}", mb_id);
-        tracing::info!(mb_id = %mb_id, "STEP 3.1: Fetching full artist details for relations");
+        let artist_name = sqlx::query_scalar!("SELECT name FROM artists WHERE id = $1", artist_id)
+            .fetch_one(&self.db)
+            .await
+            .unwrap_or_default();
 
-        println!("CORE_DEBUG: STEP 3.1: Sending MB fetch request (with_url_relations)...");
-        let artist_full = self
-            .mb_retry(|| async {
-                MBArtist::fetch()
-                    .id(&mb_id.to_string())
-                    .with_url_relations()
-                    .execute_with_client(&self.mb_client)
-                    .await
-            })
-            .await?;
-        println!("CORE_DEBUG: STEP 3.1: MB fetch request completed.");
-
+        tracing::info!(artist = %artist_name, "Fetching artist image...");
+        
         let mut image_url = None;
-        let mut wikidata_id = None;
 
-        if let Some(rels) = artist_full.relations {
-            println!("CORE_DEBUG: STEP 3.2: Found {} relations", rels.len());
-            for rel in rels {
-                if let RelationContent::Url(url) = rel.content {
-                    if rel.relation_type == "image" {
-                        image_url = Some(url.resource);
-                        println!(
-                            "CORE_DEBUG: STEP 3.2: Found direct image relation: {}",
-                            image_url.as_ref().unwrap()
-                        );
-                        tracing::info!(url = ?image_url, "STEP 3.2: Found direct image relation");
-                        break;
-                    }
-                    if rel.relation_type == "wikidata" {
-                        wikidata_id = url.resource.split('/').next_back().map(|s| s.to_string());
-                        println!(
-                            "CORE_DEBUG: STEP 3.2: Found Wikidata relation: {:?}",
-                            wikidata_id
-                        );
-                        tracing::info!(qid = ?wikidata_id, "STEP 3.2: Found Wikidata relation");
+        // 策略 1: 优先尝试 Last.fm (覆盖率较高)
+        image_url = self.fetch_image_from_lastfm(&artist_name).await.ok();
+        
+        if image_url.is_some() {
+            tracing::info!(artist = %artist_name, "Found image on Last.fm");
+        }
+
+        // 策略 2: 回退至 MusicBrainz/Wikidata
+        if image_url.is_none() {
+            let artist_full = self
+                .mb_retry(|| async {
+                    MBArtist::fetch()
+                        .id(&mb_id.to_string())
+                        .with_url_relations()
+                        .execute_with_client(&self.mb_client)
+                        .await
+                })
+                .await.ok();
+
+            if let Some(artist_full) = artist_full {
+                if let Some(rels) = artist_full.relations {
+                    for rel in rels {
+                        if let RelationContent::Url(url) = rel.content {
+                            if rel.relation_type == "image" {
+                                image_url = Some(url.resource);
+                                break;
+                            }
+                            if rel.relation_type == "wikidata" {
+                                let qid = url.resource.split('/').next_back().map(|s| s.to_string());
+                                if let Some(q) = qid {
+                                    image_url = self.fetch_image_from_wikidata(&q).await.ok();
+                                }
+                            }
+                        }
                     }
                 }
             }
-        } else {
-            println!("CORE_DEBUG: STEP 3.2: No relations found in MB response.");
-        }
-
-        if image_url.is_none() {
-            if let Some(qid) = wikidata_id {
-                println!("CORE_DEBUG: STEP 3.3: Trying Wikidata API for QID {}", qid);
-                tracing::info!(qid = %qid, "STEP 3.3: Trying Wikidata API");
-                image_url = self.fetch_image_from_wikidata(&qid).await.ok();
-                println!("CORE_DEBUG: STEP 3.3: Wikidata result: {:?}", image_url);
-            }
-        }
-
-        // 核心增强：如果还是没图，尝试 Last.fm (针对日本/华语歌手极佳)
-        if image_url.is_none() {
-            let artist_name =
-                sqlx::query_scalar!("SELECT name FROM artists WHERE id = $1", artist_id)
-                    .fetch_one(&self.db)
-                    .await
-                    .unwrap_or_default();
-            println!(
-                "CORE_DEBUG: STEP 3.4: Trying Last.fm fallback for '{}'",
-                artist_name
-            );
-            image_url = self.fetch_image_from_lastfm(&artist_name).await.ok();
-            println!("CORE_DEBUG: STEP 3.4: Last.fm result: {:?}", image_url);
         }
 
         if let Some(url) = image_url {
-            println!(
-                "CORE_DEBUG: STEP 4: Downloading photo from {} (Source: {})",
-                url, url
-            );
-            tracing::info!(url = %url, "STEP 4: Downloading photo");
-
-            // 尝试下载到本地
             if let Err(e) = self.download_and_save_artist_image(&url, artist_id).await {
-                tracing::warn!(
-                    "STEP 4: Local download failed, falling back to remote URL: {:?}",
-                    e
-                );
-                println!("CORE_DEBUG: STEP 4: Local download failed, falling back to remote URL");
-
-                // 核心降级逻辑：解析 URL（处理 Wiki 页面）并存入数据库
+                tracing::warn!(artist = %artist_name, error = ?e, "Download failed, storing remote URL as fallback");
+                
                 let direct_url = self.resolve_wikimedia_url(&url);
-                sqlx::query!(
-                    "UPDATE artists SET image_url = $1 WHERE id = $2",
-                    direct_url,
-                    artist_id
-                )
-                .execute(&self.db)
-                .await?;
+                sqlx::query!("UPDATE artists SET image_url = $1 WHERE id = $2", direct_url, artist_id)
+                    .execute(&self.db)
+                    .await?;
             }
-        } else {
-            println!("CORE_DEBUG: STEP 4: No image URL found from any source");
-            tracing::warn!("STEP 4: No image URL found from any source");
         }
 
-        println!("CORE_DEBUG: fetch_artist_image FINISHED for MBID {}", mb_id);
         Ok(())
     }
 

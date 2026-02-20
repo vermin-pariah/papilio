@@ -32,9 +32,9 @@ impl Organizer {
             .collect();
 
         let total = entries.len() as i32;
-        sqlx::query("UPDATE scan_status SET is_scanning = TRUE, current_count = 0, total_count = $1 WHERE id = 1")
-            .bind(total)
-            .execute(&self.db).await?;
+        // 移除对 scan_status 的更新，或者使用专门的字段（如果以后支持）
+        // 目前为了不让前端误解为扫描，我们只记录日志，或者可以增加一个专用状态。
+        // sqlx::query("UPDATE scan_status SET is_scanning = TRUE, current_count = 0, total_count = $1 WHERE id = 1")
 
         let mut current = 0;
         for entry in entries {
@@ -72,7 +72,7 @@ impl Organizer {
     }
 
     async fn cleanup_root_lrc_files(&self) -> Result<(), AppError> {
-        tracing::info!("!!! ULTIMATE CLEANUP: Aggressive root scan...");
+        tracing::info!("Cleaning up loose LRC files in library root...");
         let mut entries = fs::read_dir(&self.music_root).await?;
 
         let mut lrc_files = Vec::new();
@@ -87,7 +87,7 @@ impl Organizer {
             let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("unknown.lrc");
             let file_stem = path.file_stem().and_then(|f| f.to_str()).unwrap_or("unknown");
 
-            // 改进匹配：取第一个横杠或下划线前的部分作为关键词
+            // 匹配逻辑：取第一个分隔符前的部分作为搜索关键词
             let keyword = file_stem
                 .split(&['-', '_', ' '][..])
                 .next()
@@ -110,7 +110,7 @@ impl Organizer {
                 if let Some(dest_dir) = audio_path.parent() {
                     let dest_lrc = dest_dir.join(file_name);
                     tracing::info!(
-                        ">>> CATCH SUCCESS: '{}' -> {}",
+                        "Relocating loose LRC: '{}' -> {}",
                         file_name,
                         dest_dir.display()
                     );
@@ -119,7 +119,6 @@ impl Organizer {
                 }
             }
 
-            // 更新进度 (假设这是第二阶段)
             let _ = sqlx::query("UPDATE scan_status SET current_count = $1 WHERE id = 1")
                 .bind(i as i32)
                 .execute(&self.db)
@@ -223,12 +222,34 @@ impl Organizer {
         src_audio: &Path,
         dest_audio: &Path,
     ) -> Result<(), AppError> {
-        let lrc_src_current = src_audio.with_extension("lrc");
-        let lrc_dest = dest_audio.with_extension("lrc");
+        let src_parent = src_audio.parent().ok_or_else(|| AppError::Internal("Invalid src path".into()))?;
+        let dest_parent = dest_audio.parent().ok_or_else(|| AppError::Internal("Invalid dest path".into()))?;
 
-        if !lrc_dest.exists() && lrc_src_current.exists() {
-            let _ = self.robust_move(&lrc_src_current, &lrc_dest).await;
+        // 1. 移动与音轨关联的特定扩展名文件
+        let extensions = ["lrc", "jpg", "png", "jpeg", "txt", "pdf"];
+        for ext in extensions {
+            let asset_src = src_audio.with_extension(ext);
+            let asset_dest = dest_audio.with_extension(ext);
+            if asset_src.exists() && asset_src.is_file() && !asset_dest.exists() {
+                tracing::debug!("Moving associated file: {} -> {}", ext, dest_parent.display());
+                let _ = self.robust_move(&asset_src, &asset_dest).await;
+            }
         }
+
+        // 2. 移动专辑级别的共用文件 (如 cover.jpg, folder.jpg)
+        let album_assets = [
+            "cover.jpg", "cover.png", "cover.jpeg", "folder.jpg", "folder.png", 
+            "front.jpg", "front.png", "album.jpg", "album.png"
+        ];
+        for asset in album_assets {
+            let asset_src = src_parent.join(asset);
+            let asset_dest = dest_parent.join(asset);
+            if asset_src.exists() && asset_src.is_file() && !asset_dest.exists() {
+                tracing::info!("Moving album asset: {} -> {}", asset, dest_parent.display());
+                let _ = self.robust_move(&asset_src, &asset_dest).await;
+            }
+        }
+
         Ok(())
     }
 
@@ -239,9 +260,9 @@ impl Organizer {
         let internal_cover_dir =
             std::env::var("COVER_DIR").unwrap_or_else(|_| "data/covers".to_string());
 
-        tracing::info!("!!! ASSET RECOVERY: Scanning internal folders...");
+        tracing::info!("Starting synchronization of internal assets to music library...");
 
-        // 1. 物理扫描内部头像目录
+        // 1. 扫描并同步内部头像目录
         if let Ok(mut entries) = fs::read_dir(&internal_avatar_dir).await {
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();

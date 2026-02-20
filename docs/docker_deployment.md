@@ -10,7 +10,7 @@ Papilio 官方强烈推荐使用 **Docker** 进行生产环境部署。这种方
 ```yaml
 services:
   server:
-    image: andrialpcoulter/papilio-server:v0.1.0
+    image: andrialpcoulter/papilio-server:latest
     ports:
       - "3000:3000"
     environment:
@@ -18,10 +18,15 @@ services:
       - REDIS_URL=redis://redis:6379/
       - JWT_SECRET=您的随机密钥
       - MUSIC_DIR=/music
+      # 如果您在中国大陆使用，建议配置宿主机代理以同步歌手元数据
+      # - HTTP_PROXY=http://192.168.x.x:7890
+      # - HTTPS_PROXY=http://192.168.x.x:7890
     volumes:
       - /您的/物理曲库/路径:/music
       - ./data/covers:/app/data/covers
       - ./data/avatars:/app/data/avatars
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
@@ -67,10 +72,11 @@ docker compose up -d
 | :--- | :--- |
 | `JWT_SECRET` | 必须修改。用于生成用户登录令牌，建议使用长随机字符串。 |
 | `MUSIC_DIR` | 容器内的曲库路径，默认为 `/music`。请确保挂载了宿主机的物理目录。 |
-| `SCAN_CONCURRENCY` | (可选) 扫描并发数。如果服务器配置较低，可设为 `4`。 |
+| `HTTP_PROXY` | (可选) 后端同步歌手图片时的网络代理。若同步超时，请务必配置。 |
+| `SCAN_CONCURRENCY` | (可选) 扫描并发数。默认为 `8`。 |
 
 ## 📦 官方镜像
-- **Docker Hub**: `andrialpcoulter/papilio-server:v0.1.0`
+- **Docker Hub**: `andrialpcoulter/papilio-server:latest`
 - **基础镜像**: Ubuntu 24.04 (包含全量音频解码与转码组件)
 
 ## 🛡️ 安全提示

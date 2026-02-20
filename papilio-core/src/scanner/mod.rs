@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use tokio::fs as tfs;
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex;
+use sanitize_filename;
 
 pub mod organizer;
 
@@ -286,21 +287,15 @@ impl Scanner {
 
         tracing::debug!(title = %final_title, artist = %final_artist, album = %final_album, "Extracted basic metadata");
 
-        // 歌词抓取逻辑重构
-        let mut lyrics = None;
-        let mut lyrics_source = "none";
-
-        // 策略 A: 外部 .lrc 文件 (增强型搜索)
+        // 策略 A: 外部 .lrc 文件
         if let Some(lrc_path) = self.find_lrc_file(path).await {
             if let Ok(bytes) = tokio::fs::read(&lrc_path).await {
-                // 尝试多种编码嗅探：UTF-8 -> GBK (常用) -> Big5
+                // 尝试多种编码探测：UTF-8 -> GBK -> Big5
                 let (content, encoding_used, has_errors) = encoding_rs::UTF_8.decode(&bytes);
                 
                 let final_content = if has_errors {
-                    // 尝试 GBK (中文环境最常见)
                     let (gbk_content, _, gbk_errors) = encoding_rs::GBK.decode(&bytes);
                     if gbk_errors {
-                        // 最终回退：Big5 (繁体) 或 原始损失转换
                         let (big5_content, _, _) = encoding_rs::BIG5.decode(&bytes);
                         big5_content.to_string()
                     } else {
@@ -313,18 +308,16 @@ impl Scanner {
                 lyrics = Some(final_content.replace('\0', ""));
                 lyrics_source = "file";
                 tracing::info!(
-                    "Loaded LRC file: {} (Probable Encoding: {})",
+                    "Loaded LRC file: {} (Encoding: {})",
                     lrc_path.display(),
                     encoding_used.name()
                 );
             }
         }
 
-        // 策略 B: 若无外部文件，尝试提取内嵌歌词
+        // 策略 B: 提取内嵌歌词 (USLT/LYRICS 标签)
         if lyrics.is_none() {
             for tag in tagged_file.tags() {
-                // 尝试从常见标签名中提取 (USLT, LYRICS, etc.)
-                // Lofty 的 Accessor 提供了通用的 lyrics() 方法
                 if let Some(content) = tag.get_string(&lofty::tag::ItemKey::Lyrics) {
                     lyrics = Some(content.to_string());
                     lyrics_source = "embedded";
@@ -338,12 +331,24 @@ impl Scanner {
             .get_or_create_album(&final_album, artist_id, year)
             .await?;
 
-        // 封面提取优化：尝试从所有标签中提取，不局限于 primary_tag
+        // 封面提取：遍历所有标签尝试提取
         let mut cover_extracted = false;
-        if let Some(tag) = tagged_file.primary_tag() {
-            if let Some(pic) = tag.pictures().first() {
-                let _ = self.save_cover(pic, album_id).await;
-                cover_extracted = true;
+        
+        // 检查数据库中是否已存在封面记录
+        let existing_cover: Option<String> = sqlx::query_scalar("SELECT cover_path FROM albums WHERE id = $1")
+            .bind(album_id)
+            .fetch_one(&self.db).await.unwrap_or(None);
+
+        if existing_cover.is_some() {
+            cover_extracted = true;
+        }
+
+        if !cover_extracted {
+            if let Some(tag) = tagged_file.primary_tag() {
+                if let Some(pic) = tag.pictures().first() {
+                    let _ = self.save_cover(pic, album_id).await;
+                    cover_extracted = true;
+                }
             }
         }
 
@@ -351,12 +356,21 @@ impl Scanner {
             for tag in tagged_file.tags() {
                 if let Some(pic) = tag.pictures().first() {
                     let _ = self.save_cover(pic, album_id).await;
+                    cover_extracted = true;
                     break;
                 }
             }
         }
 
-        let sync_status = if lyrics.is_some() { "pending" } else { "none" };
+        // 策略 C: 外部封面探测 (cover.jpg, folder.jpg 等)
+        if !cover_extracted {
+            if let Some(ext_cover_path) = self.find_external_cover(path).await {
+                let _ = self.save_external_cover(&ext_cover_path, album_id).await;
+            }
+        }
+
+        // 策略 D: 关联歌手头像 (探测歌手目录下的 folder.jpg)
+        let _ = self.link_existing_artist_image(path, artist_id).await;
 
         tracing::debug!(track = %final_title, "Inserting track into database...");
 
@@ -434,24 +448,6 @@ impl Scanner {
         let target_dir = Path::new(&music_root).join(safe_art).join(safe_alb);
         let full_save_path = target_dir.join(format!("cover.{}", extension));
 
-        if !target_dir.exists() {
-            tokio::fs::create_dir_all(&target_dir).await?;
-        }
-
-        // 如果文件已存在且不为空，跳过以节省 IO
-        if full_save_path.exists()
-            && fs::metadata(&full_save_path)
-                .await
-                .map(|m| m.len())
-                .unwrap_or(0)
-                > 0
-        {
-            return Ok(());
-        }
-
-        tracing::info!(album = %album_info.title, "Saving cover directly to library: {}", full_save_path.display());
-        tokio::fs::write(&full_save_path, pic.data()).await?;
-
         // 数据库存储相对路径
         let rel_path = full_save_path
             .strip_prefix(&music_root)
@@ -459,6 +455,26 @@ impl Scanner {
             .to_str()
             .unwrap()
             .to_string();
+
+        // 如果文件已存在且不为空，更新数据库并跳过写入以节省 IO
+        if full_save_path.exists()
+            && fs::metadata(&full_save_path)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0)
+                > 0
+        {
+            sqlx::query("UPDATE albums SET cover_path = $1 WHERE id = $2")
+                .bind(rel_path)
+                .bind(album_id)
+                .execute(&self.db)
+                .await?;
+            return Ok(());
+        }
+
+        tracing::info!(album = %album_info.title, "Saving cover directly to library: {}", full_save_path.display());
+        tokio::fs::write(&full_save_path, pic.data()).await?;
+
         sqlx::query("UPDATE albums SET cover_path = $1 WHERE id = $2")
             .bind(rel_path)
             .bind(album_id)
@@ -515,6 +531,160 @@ impl Scanner {
         Ok(res.id)
     }
 
+    async fn link_existing_artist_image(&self, audio_path: &Path, artist_id: Uuid) -> Result<(), AppError> {
+        // 如果该歌手已经有图片，跳过
+        let current_image: Option<String> = sqlx::query_scalar("SELECT image_url FROM artists WHERE id = $1")
+            .bind(artist_id)
+            .fetch_one(&self.db).await.unwrap_or(None);
+        
+        if current_image.is_some() && !current_image.unwrap_or_default().is_empty() {
+            return Ok(());
+        }
+
+        let music_root = std::env::var("MUSIC_DIR").unwrap_or_else(|_| "/music".to_string());
+        let mut current_dir = audio_path.parent();
+
+        // 最多向上找两级 (专辑目录 -> 歌手目录)
+        for _ in 0..2 {
+            if let Some(dir) = current_dir {
+                // 常见的歌手头像文件名
+                let patterns = ["folder.jpg", "folder.png", "artist.jpg", "artist.png", "logo.jpg", "logo.png"];
+                for pattern in patterns {
+                    let candidate = dir.join(pattern);
+                    if candidate.exists() && candidate.is_file() {
+                        let rel_path = candidate
+                            .strip_prefix(&music_root)
+                            .unwrap_or(&candidate)
+                            .to_str()
+                            .unwrap_or_default()
+                            .to_string();
+                        
+                        let clean_path = if rel_path.starts_with('/') { &rel_path[1..] } else { &rel_path };
+
+                        if !clean_path.is_empty() {
+                            tracing::info!("Found existing artist image at: {}", clean_path);
+                            sqlx::query!("UPDATE artists SET image_url = $1 WHERE id = $2", clean_path, artist_id)
+                                .execute(&self.db)
+                                .await?;
+                            return Ok(());
+                        }
+                    }
+                }
+                current_dir = dir.parent();
+            } else {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn find_external_cover(&self, audio_path: &Path) -> Option<PathBuf> {
+        let parent = audio_path.parent()?;
+        tracing::info!("DEBUG_SCAN: Searching for external cover in {}", parent.display());
+        let mut entries = tfs::read_dir(parent).await.ok()?;
+
+        let mut candidates = Vec::new();
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            if path.is_file() {
+                let name = path.file_name().and_then(|f| f.to_str()).unwrap_or_default().to_lowercase();
+                tracing::info!("DEBUG_SCAN: Checking file: {}", name);
+                if name.ends_with(".jpg") || name.ends_with(".jpeg") || name.ends_with(".png") || name.ends_with(".webp") {
+                    tracing::info!("DEBUG_SCAN: Potential candidate found: {}", name);
+                    candidates.push(path);
+                }
+            }
+        }
+
+        // 优先级：精确匹配
+        let priority = ["cover.", "folder.", "front.", "album.", "art."];
+        for p in priority {
+            if let Some(found) = candidates.iter().find(|c| {
+                let fname = c.file_name()
+                    .and_then(|f| f.to_str())
+                    .map(|s| s.to_lowercase())
+                    .unwrap_or_default();
+                fname.starts_with(p)
+            }) {
+                tracing::info!("DEBUG_SCAN: Priority match success: {}", p);
+                return Some(found.clone());
+            }
+        }
+
+        // 模糊匹配：跟歌曲同名
+        if let Some(stem) = audio_path.file_stem().and_then(|s| s.to_str()) {
+            let stem_lower = stem.to_lowercase();
+            if let Some(found) = candidates.iter().find(|c| {
+                c.file_stem()
+                    .and_then(|f| f.to_str())
+                    .map(|s| s.to_lowercase() == stem_lower)
+                    .unwrap_or(false)
+            }) {
+                return Some(found.clone());
+            }
+        }
+
+        // 如果该目录下只有一个图片，默认为封面
+        if candidates.len() == 1 {
+            return Some(candidates[0].clone());
+        }
+
+        None
+    }
+
+    async fn save_external_cover(&self, cover_path: &Path, album_id: Uuid) -> Result<(), AppError> {
+        let album_info = sqlx::query!(
+            "SELECT a.title, ar.name as artist_name FROM albums a JOIN artists ar ON a.artist_id = ar.id WHERE a.id = $1",
+            album_id
+        ).fetch_one(&self.db).await.map_err(AppError::Database)?;
+
+        let music_root = std::env::var("MUSIC_DIR").unwrap_or_else(|_| "/music".to_string());
+        let safe_art = sanitize_filename::sanitize(&album_info.artist_name);
+        let safe_alb = sanitize_filename::sanitize(&album_info.title);
+
+        let target_dir = Path::new(&music_root).join(safe_art).join(safe_alb);
+        let extension = cover_path.extension().and_then(|s| s.to_str()).unwrap_or("jpg");
+        let full_save_path = target_dir.join(format!("cover.{}", extension));
+
+        let mut final_path = cover_path.to_path_buf();
+
+        // 尝试规范化拷贝
+        if cover_path != full_save_path && !full_save_path.exists() {
+            if !target_dir.exists() {
+                let _ = tokio::fs::create_dir_all(&target_dir).await;
+            }
+            if let Err(e) = tokio::fs::copy(cover_path, &full_save_path).await {
+                tracing::warn!("Failed to copy cover to structured path (possibly Read-Only FS): {}. Using original path.", e);
+            } else {
+                final_path = full_save_path;
+            }
+        } else if full_save_path.exists() {
+            final_path = full_save_path;
+        }
+
+        let mut rel_path = final_path
+            .strip_prefix(&music_root)
+            .unwrap_or(&final_path)
+            .to_str()
+            .ok_or_else(|| AppError::Internal("Invalid path encoding".into()))?
+            .to_string();
+
+        if rel_path.starts_with('/') {
+            rel_path = rel_path[1..].to_string();
+        }
+
+        tracing::info!("Linking album {} to cover: {}", album_id, rel_path);
+
+        sqlx::query("UPDATE albums SET cover_path = $1 WHERE id = $2")
+            .bind(rel_path)
+            .bind(album_id)
+            .execute(&self.db)
+            .await?;
+
+        Ok(())
+    }
+
     async fn find_lrc_file(&self, audio_path: &Path) -> Option<PathBuf> {
         // 1. 同目录下同名文件 (最快路径)
         let same_dir_lrc = audio_path.with_extension("lrc");
@@ -522,30 +692,18 @@ impl Scanner {
             return Some(same_dir_lrc);
         }
 
-        // 2. 尝试处理 /music/succeed/ 镜像路径
-        // 示例: /music/A/B.mp3 -> /music/succeed/A/B.lrc
-        let music_root = std::env::var("MUSIC_DIR").unwrap_or_else(|_| "/music".to_string());
-        if let Ok(rel_path) = audio_path.strip_prefix(&music_root) {
-            let succeed_lrc = Path::new(&music_root)
-                .join("succeed")
-                .join(rel_path)
-                .with_extension("lrc");
-            if succeed_lrc.exists() {
-                return Some(succeed_lrc);
-            }
-
-            // 3. 模糊匹配 (同目录下以歌曲名开头的文件)
-            if let Some(parent) = succeed_lrc.parent() {
-                if let Some(stem) = audio_path.file_stem().and_then(|s| s.to_str()) {
-                    if let Ok(mut entries) = tfs::read_dir(parent).await {
-                        while let Ok(Some(entry)) = entries.next_entry().await {
-                            let name = entry.file_name();
-                            let name_str = name.to_string_lossy();
-                            if name_str.starts_with(stem) && name_str.ends_with(".lrc") {
-                                return Some(entry.path());
-                            }
-                        }
+        // 2. 同目录下模糊匹配 (如果只有一个 lrc 文件)
+        if let Some(parent) = audio_path.parent() {
+            if let Ok(mut entries) = tfs::read_dir(parent).await {
+                let mut lrcs = Vec::new();
+                while let Ok(Some(entry)) = entries.next_entry().await {
+                    let path = entry.path();
+                    if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("lrc") {
+                        lrcs.push(path);
                     }
+                }
+                if lrcs.len() == 1 {
+                    return Some(lrcs[0].clone());
                 }
             }
         }
